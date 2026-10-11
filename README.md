@@ -54,12 +54,14 @@ Example for ES (tick $12.50) with a $500 limit:
 2. A market order goes to the account selected in **Chart Trader**. If Chart Trader is not available, it goes to the
    **Fallback account** property.
 3. When the entry fills, the panel submits an OCO pair: a stop-market order and a limit target, both GTC.
-   - Candle-based stops stay at the candle price. The target is re-measured from the actual fill price.
-   - Fixed-tick stops are measured from the actual fill price.
-   - If a partial fill happens, each filled part gets its own bracket.
-   - If the fill slipped past the candle stop, the position is closed at market straight away.
+   - The stop and target prices are fixed at the moment you click. They come only from the candle prices and the
+     ask (buy) or bid (sell) at that moment. The actual fill price never moves them.
+   - If a partial fill happens, each filled part gets its own stop and target at those same prices.
+   - The position is never closed automatically because the fill slipped past the stop level. If the broker rejects
+     the stop (for example, because the market is already through it), the panel shows a "REJECTED" warning and logs
+     it, and you manage the position yourself.
 
-Because the size is calculated before the fill, slippage on the market order can make the actual loss slightly larger than the limit.
+Because the size is calculated from the click-time price, slippage on the market order can make the actual loss larger than the limit.
 
 ## Settings
 
