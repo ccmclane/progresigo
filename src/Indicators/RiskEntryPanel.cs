@@ -141,6 +141,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 				return plan;
 			}
 
+			// Recomputes the bracket from the actual fill. Candle-anchored stops keep their candle price;
+			// fixed-tick stops are re-measured from the fill. The target is always multiple * actual stop size.
+			public static void BracketForFill(bool isLong, StopAnchor anchor, int ticks, double multiple, double plannedStop,
+				double fillPrice, double tickSize, out double stopPrice, out double targetPrice, out bool stopBreached)
+			{
+				stopPrice = anchor == StopAnchor.FixedTicks
+					? (isLong ? fillPrice - ticks * tickSize : fillPrice + ticks * tickSize)
+					: plannedStop;
+				stopPrice = RoundToTick(stopPrice, tickSize);
+
+				int stopTicks = (int)Math.Round((isLong ? fillPrice - stopPrice : stopPrice - fillPrice) / tickSize, MidpointRounding.AwayFromZero);
+				stopBreached = stopTicks < 1;
+
+				int targetTicks = Math.Max(1, (int)Math.Round(Math.Max(stopTicks, 1) * multiple, MidpointRounding.AwayFromZero));
+				targetPrice = RoundToTick(isLong ? fillPrice + targetTicks * tickSize : fillPrice - targetTicks * tickSize, tickSize);
+			}
+
 			private static TradePlan Fail(TradePlan plan, string error)
 			{
 				plan.Error = error;
@@ -163,8 +180,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			public Account Account;
 			public Instrument Instrument;
 			public bool IsLong;
-			public double StopPrice;	// fixed at click time from candle prices and ask/bid
-			public double TargetPrice;	// fixed at click time; the fill price never moves it
+			public EntrySpec Spec;
+			public double PlannedStop;
 			public int BracketedQuantity;
 		}
 
@@ -202,7 +219,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private readonly object pendingLock = new object();
 		private readonly Dictionary<Order, PendingEntry> pendingEntries = new Dictionary<Order, PendingEntry>();
-		private readonly HashSet<Order> bracketOrders = new HashSet<Order>();
 		private readonly HashSet<Account> subscribedAccounts = new HashSet<Account>();
 
 		private Chart chartWindow;
@@ -282,7 +298,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 						account.OrderUpdate -= OnAccountOrderUpdate;
 					subscribedAccounts.Clear();
 					pendingEntries.Clear();
-					bracketOrders.Clear();
 				}
 
 				if (ChartControl != null)
@@ -403,8 +418,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					Account = account,
 					Instrument = Instrument,
 					IsLong = isLong,
-					StopPrice = plan.StopPrice,
-					TargetPrice = plan.TargetPrice
+					Spec = spec,
+					PlannedStop = plan.StopPrice
 				};
 
 			account.Submit(new[] { entry });
@@ -416,21 +431,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			PendingEntry pending;
 			int newlyFilled = 0;
-			bool isBracketOrder;
-
-			lock (pendingLock)
-			{
-				isBracketOrder = bracketOrders.Contains(e.Order);
-				if (isBracketOrder && Order.IsTerminalState(e.OrderState))
-					bracketOrders.Remove(e.Order);
-			}
-
-			if (isBracketOrder)
-			{
-				if (e.OrderState == OrderState.Rejected)
-					Report(string.Format("{0} REJECTED ({1}) - position may be unprotected, manage it manually", e.Order.Name, e.Comment), true);
-				return;
-			}
 
 			lock (pendingLock)
 			{
@@ -454,28 +454,36 @@ namespace NinjaTrader.NinjaScript.Indicators
 				Report(string.Format("Entry {0}: {1}", e.OrderState, e.Comment), true);
 		}
 
-		// Stop and target were fixed at click time; slippage on the entry fill does not move them
-		// and never triggers an automatic exit. fillPrice is used for reporting only.
 		private void SubmitBracket(PendingEntry pending, int quantity, double fillPrice)
 		{
 			try
 			{
+				double tickSize = pending.Instrument.MasterInstrument.TickSize;
+				double stopPrice, targetPrice;
+				bool stopBreached;
+				RiskMath.BracketForFill(pending.IsLong, pending.Spec.Anchor, pending.Spec.Ticks, pending.Spec.Multiple,
+					pending.PlannedStop, fillPrice, tickSize, out stopPrice, out targetPrice, out stopBreached);
+
 				OrderAction exitAction = pending.IsLong ? OrderAction.Sell : OrderAction.BuyToCover;
+
+				if (stopBreached)
+				{
+					// The fill slipped through the stop level: the trade is already invalid, so exit immediately.
+					Order exit = pending.Account.CreateOrder(pending.Instrument, exitAction, OrderType.Market, OrderEntry.Manual,
+						TimeInForce.Day, quantity, 0, 0, string.Empty, "RiskEntry Exit", Core.Globals.MaxDate, null);
+					pending.Account.Submit(new[] { exit });
+					Report(string.Format("Filled {0} at {1}, beyond stop {2}; exiting at market", quantity, Format(fillPrice), Format(stopPrice)), true);
+					return;
+				}
+
 				string oco = "RE" + Guid.NewGuid().ToString("N");
 				Order stop = pending.Account.CreateOrder(pending.Instrument, exitAction, OrderType.StopMarket, OrderEntry.Manual,
-					TimeInForce.Gtc, quantity, 0, pending.StopPrice, oco, "RiskEntry Stop", Core.Globals.MaxDate, null);
+					TimeInForce.Gtc, quantity, 0, stopPrice, oco, "RiskEntry Stop", Core.Globals.MaxDate, null);
 				Order target = pending.Account.CreateOrder(pending.Instrument, exitAction, OrderType.Limit, OrderEntry.Manual,
-					TimeInForce.Gtc, quantity, pending.TargetPrice, 0, oco, "RiskEntry Target", Core.Globals.MaxDate, null);
-
-				lock (pendingLock)
-				{
-					bracketOrders.Add(stop);
-					bracketOrders.Add(target);
-				}
+					TimeInForce.Gtc, quantity, targetPrice, 0, oco, "RiskEntry Target", Core.Globals.MaxDate, null);
 				pending.Account.Submit(new[] { stop, target });
 
-				Report(string.Format("Filled {0} at {1}; stop {2}, target {3}", quantity, Format(fillPrice),
-					Format(pending.StopPrice), Format(pending.TargetPrice)), false);
+				Report(string.Format("Filled {0} at {1}; stop {2}, target {3}", quantity, Format(fillPrice), Format(stopPrice), Format(targetPrice)), false);
 			}
 			catch (Exception ex)
 			{
