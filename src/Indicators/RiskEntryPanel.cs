@@ -222,9 +222,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private readonly HashSet<Account> subscribedAccounts = new HashSet<Account>();
 
 		private Chart chartWindow;
-		private Grid chartGrid;
-		private ColumnDefinition panelColumn;
-		private Border panelRoot;
+		private Grid chartTraderGrid;
+		private RowDefinition addedRow;
+		private Grid panelRoot;
+		private bool chartTraderMissingReported;
 		private TextBlock statusText;
 		private bool panelAdded;
 		private readonly List<HotkeyBinding> hotkeys = new List<HotkeyBinding>();
@@ -252,7 +253,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				ConfirmClose = false;
 				ConfirmFlattenAll = true;
 				CloseInAllAccounts = false;
-				PanelWidth = 190;
 
 				CurBarOffsetTicks = 1;
 				CurBarMultiple = 2;
@@ -624,20 +624,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (chartWindow == null)
 				return;
 
-			chartGrid = chartWindow.MainTabControl.Parent as Grid;
-			if (chartGrid == null)
-				return;
-
-			StackPanel stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(4) };
-
-			stack.Children.Add(new TextBlock
-			{
-				Text = string.Format(CultureInfo.InvariantCulture, "Risk ${0:0.##}  max {1}", MaxLossDollars, MaxContracts),
-				Foreground = Brushes.White,
-				FontWeight = FontWeights.Bold,
-				Margin = new Thickness(0, 0, 0, 4)
-			});
-
 			List<EntrySpec> specs = BuildEntrySpecs().ToList();
 			Brush buyBrush = new SolidColorBrush(Color.FromRgb(0x1B, 0x7F, 0x3B));
 			Brush sellBrush = new SolidColorBrush(Color.FromRgb(0xA8, 0x23, 0x23));
@@ -645,61 +631,49 @@ namespace NinjaTrader.NinjaScript.Indicators
 			Brush dangerBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x00, 0x00));
 			buyBrush.Freeze(); sellBrush.Freeze(); neutralBrush.Freeze(); dangerBrush.Freeze();
 
+			// Buy buttons in the left column, Sell buttons in the right column.
+			Grid grid = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
 			hotkeys.Clear();
-			AddSection(stack, "BUY");
+			int row = 0;
 			foreach (EntrySpec spec in specs)
 			{
 				EntrySpec captured = spec;
-				string text = string.Format(CultureInfo.InvariantCulture, "Buy {0}  -{1}t  {2}R", BuyLabel(spec), spec.Ticks, spec.Multiple);
-				stack.Children.Add(MakeButton(text, spec.BuyHotkey, buyBrush, () => ExecuteEntry(captured, true)));
+				grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+				AddToGrid(grid, MakeButton("Buy " + ButtonCode(spec, true), Describe(spec, true), spec.BuyHotkey, buyBrush,
+					() => ExecuteEntry(captured, true)), row, 0);
+				AddToGrid(grid, MakeButton("Sell " + ButtonCode(spec, false), Describe(spec, false), spec.SellHotkey, sellBrush,
+					() => ExecuteEntry(captured, false)), row, 1);
+				row++;
 			}
 
-			AddSection(stack, "SELL");
-			foreach (EntrySpec spec in specs)
-			{
-				EntrySpec captured = spec;
-				string text = string.Format(CultureInfo.InvariantCulture, "Sell {0}  +{1}t  {2}R", SellLabel(spec), spec.Ticks, spec.Multiple);
-				stack.Children.Add(MakeButton(text, spec.SellHotkey, sellBrush, () => ExecuteEntry(captured, false)));
-			}
-
-			AddSection(stack, "EXIT");
-			stack.Children.Add(MakeButton("Close " + Instrument.MasterInstrument.Name, CloseHotkey, neutralBrush, CloseInstrument));
-			stack.Children.Add(MakeButton("Flatten All", FlattenAllHotkey, dangerBrush, FlattenAll));
+			grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			AddToGrid(grid, MakeButton("Close " + Instrument.MasterInstrument.Name,
+				"Cancel orders and close positions for " + Instrument.FullName, CloseHotkey, neutralBrush, CloseInstrument), row, 0);
+			AddToGrid(grid, MakeButton("Flatten All",
+				"Cancel all orders and close all positions on every instrument", FlattenAllHotkey, dangerBrush, FlattenAll), row, 1);
+			row++;
 
 			statusText = new TextBlock
 			{
-				Text = isRealtime ? "Ready" : "Waiting for real-time data",
-				Foreground = Brushes.LightGray,
+				Text = string.Format(CultureInfo.InvariantCulture, "Risk ${0:0.##} | max {1} | {2}",
+					MaxLossDollars, MaxContracts, isRealtime ? "Ready" : "Waiting for real-time data"),
 				TextWrapping = TextWrapping.Wrap,
-				FontSize = 11,
-				Margin = new Thickness(0, 6, 0, 0)
+				FontSize = 10,
+				Margin = new Thickness(2, 3, 2, 0)
 			};
-			stack.Children.Add(statusText);
+			grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+			AddToGrid(grid, statusText, row, 0);
+			Grid.SetColumnSpan(statusText, 2);
 
-			panelRoot = new Border
-			{
-				Width = PanelWidth,
-				Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x24)),
-				Child = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = stack }
-			};
-
-			// Insert a new column to the left of the chart tabs and shift existing content right.
-			int tabColumn = Grid.GetColumn(chartWindow.MainTabControl);
-			panelColumn = new ColumnDefinition { Width = GridLength.Auto };
-			chartGrid.ColumnDefinitions.Insert(tabColumn, panelColumn);
-			foreach (UIElement child in chartGrid.Children)
-				if (Grid.GetColumn(child) >= tabColumn)
-					Grid.SetColumn(child, Grid.GetColumn(child) + 1);
-
-			Grid.SetColumn(panelRoot, tabColumn);
-			Grid.SetRow(panelRoot, Grid.GetRow(chartWindow.MainTabControl));
-			Grid.SetRowSpan(panelRoot, Math.Max(1, Grid.GetRowSpan(chartWindow.MainTabControl)));
-			chartGrid.Children.Add(panelRoot);
+			panelRoot = grid;
 
 			chartWindow.PreviewKeyDown += OnChartPreviewKeyDown;
 			chartWindow.MainTabControl.SelectionChanged += OnTabSelectionChanged;
 			panelAdded = true;
-			UpdatePanelVisibility();
+			UpdateChartTraderAttachment();
 		}
 
 		private void RemovePanel()
@@ -713,61 +687,98 @@ namespace NinjaTrader.NinjaScript.Indicators
 				chartWindow.MainTabControl.SelectionChanged -= OnTabSelectionChanged;
 			}
 
-			if (chartGrid != null)
-			{
-				chartGrid.Children.Remove(panelRoot);
-				int index = chartGrid.ColumnDefinitions.IndexOf(panelColumn);
-				if (index >= 0)
-				{
-					chartGrid.ColumnDefinitions.RemoveAt(index);
-					foreach (UIElement child in chartGrid.Children)
-						if (Grid.GetColumn(child) > index)
-							Grid.SetColumn(child, Grid.GetColumn(child) - 1);
-				}
-			}
+			DetachFromChartTrader();
 
 			hotkeys.Clear();
 			panelRoot = null;
 			statusText = null;
-			chartGrid = null;
 			chartWindow = null;
 			panelAdded = false;
 		}
 
-		private static string BuyLabel(EntrySpec spec)
+		// One Chart Trader serves the whole chart window, so the buttons are only inserted while
+		// this indicator's tab is selected (same approach as NinjaTrader's ChartTraderCustomButtonsExample).
+		private void UpdateChartTraderAttachment()
+		{
+			if (IsOurTabSelected())
+				AttachToChartTrader();
+			else
+				DetachFromChartTrader();
+		}
+
+		private void AttachToChartTrader()
+		{
+			if (chartTraderGrid != null || panelRoot == null || chartWindow == null)
+				return;
+
+			ChartTrader chartTrader = chartWindow.FindFirst("ChartWindowChartTraderControl") as ChartTrader;
+			Grid grid = chartTrader != null ? chartTrader.Content as Grid : null;
+			if (grid == null)
+			{
+				if (!chartTraderMissingReported)
+				{
+					chartTraderMissingReported = true;
+					Print("RiskEntryPanel: Chart Trader not found. Set Chart Trader to Visible or Hidden to show the buttons (hotkeys still work).");
+				}
+				return;
+			}
+
+			addedRow = new RowDefinition { Height = GridLength.Auto };
+			grid.RowDefinitions.Add(addedRow);
+			Grid.SetRow(panelRoot, grid.RowDefinitions.Count - 1);
+			Grid.SetColumn(panelRoot, 0);
+			Grid.SetColumnSpan(panelRoot, Math.Max(1, grid.ColumnDefinitions.Count));
+			grid.Children.Add(panelRoot);
+			chartTraderGrid = grid;
+		}
+
+		private void DetachFromChartTrader()
+		{
+			if (chartTraderGrid == null)
+				return;
+
+			chartTraderGrid.Children.Remove(panelRoot);
+			if (addedRow != null)
+				chartTraderGrid.RowDefinitions.Remove(addedRow);
+			addedRow = null;
+			chartTraderGrid = null;
+		}
+
+		private static void AddToGrid(Grid grid, UIElement element, int row, int column)
+		{
+			Grid.SetRow(element, row);
+			Grid.SetColumn(element, column);
+			grid.Children.Add(element);
+		}
+
+		// CL/CH = current low/high, PL/PH = previous low/high, PO = previous open, -N/+N = fixed stop ticks.
+		private static string ButtonCode(EntrySpec spec, bool isLong)
 		{
 			switch (spec.Anchor)
 			{
-				case StopAnchor.CurrentBarExtreme: return "Cur Low";
-				case StopAnchor.PreviousBarExtreme: return "Prev Low";
-				case StopAnchor.PreviousBarOpen: return "Prev Open";
-				default: return "Fixed";
+				case StopAnchor.CurrentBarExtreme: return isLong ? "CL" : "CH";
+				case StopAnchor.PreviousBarExtreme: return isLong ? "PL" : "PH";
+				case StopAnchor.PreviousBarOpen: return "PO";
+				default: return (isLong ? "-" : "+") + spec.Ticks.ToString(CultureInfo.InvariantCulture);
 			}
 		}
 
-		private static string SellLabel(EntrySpec spec)
+		private static string Describe(EntrySpec spec, bool isLong)
 		{
+			string side = isLong ? "below" : "above";
+			string level;
 			switch (spec.Anchor)
 			{
-				case StopAnchor.CurrentBarExtreme: return "Cur High";
-				case StopAnchor.PreviousBarExtreme: return "Prev High";
-				case StopAnchor.PreviousBarOpen: return "Prev Open";
-				default: return "Fixed";
+				case StopAnchor.CurrentBarExtreme: level = isLong ? "current candle low" : "current candle high"; break;
+				case StopAnchor.PreviousBarExtreme: level = isLong ? "previous candle low" : "previous candle high"; break;
+				case StopAnchor.PreviousBarOpen: level = "previous candle open"; break;
+				default: level = "entry"; break;
 			}
+			return string.Format(CultureInfo.InvariantCulture, "{0} at market. Stop {1} tick(s) {2} {3}. Target {4}R.",
+				isLong ? "Buy" : "Sell", spec.Ticks, side, level, spec.Multiple);
 		}
 
-		private static void AddSection(StackPanel stack, string title)
-		{
-			stack.Children.Add(new TextBlock
-			{
-				Text = title,
-				Foreground = Brushes.Gray,
-				FontSize = 10,
-				Margin = new Thickness(0, 6, 0, 2)
-			});
-		}
-
-		private Button MakeButton(string text, string hotkeyText, Brush background, Action action)
+		private Button MakeButton(string text, string description, string hotkeyText, Brush background, Action action)
 		{
 			HotkeyBinding binding = ParseHotkey(hotkeyText);
 			if (binding == null && !string.IsNullOrWhiteSpace(hotkeyText))
@@ -780,12 +791,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			Button button = new Button
 			{
-				Content = binding != null ? text + "   [" + hotkeyText.Trim() + "]" : text,
+				Content = text,
+				ToolTip = description + Environment.NewLine + (binding != null ? "Hotkey: " + hotkeyText.Trim() : "No hotkey"),
 				Background = background,
 				Foreground = Brushes.White,
-				HorizontalContentAlignment = HorizontalAlignment.Left,
-				Padding = new Thickness(6, 3, 6, 3),
-				Margin = new Thickness(0, 1, 0, 1),
+				HorizontalContentAlignment = HorizontalAlignment.Center,
+				Padding = new Thickness(2),
+				Margin = new Thickness(1),
 				FontSize = 11,
 				Focusable = false
 			};
@@ -827,13 +839,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e)
 		{
 			if (e.Source == chartWindow.MainTabControl)
-				UpdatePanelVisibility();
-		}
-
-		private void UpdatePanelVisibility()
-		{
-			if (panelRoot != null)
-				panelRoot.Visibility = IsOurTabSelected() ? Visibility.Visible : Visibility.Collapsed;
+				UpdateChartTraderAttachment();
 		}
 
 		private bool IsOurTabSelected()
@@ -946,10 +952,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		[Display(Name = "Close / flatten in all accounts", Description = "When off, Close and Flatten All only act on the selected account", Order = 7, GroupName = "1. Risk")]
 		public bool CloseInAllAccounts { get; set; }
-
-		[Range(120, 400)]
-		[Display(Name = "Panel width", Order = 8, GroupName = "1. Risk")]
-		public int PanelWidth { get; set; }
 
 		[Range(0, int.MaxValue)]
 		[Display(Name = "Offset ticks", Order = 1, GroupName = "2. Current bar low / high")]

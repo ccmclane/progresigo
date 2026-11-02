@@ -1,6 +1,6 @@
 # progresigo — RiskEntryPanel for NinjaTrader 8
 
-A NinjaTrader 8 chart add-on (NinjaScript indicator) that adds an order-entry panel to the chart window.
+A NinjaTrader 8 chart add-on (NinjaScript indicator) that adds order-entry buttons to the chart's Chart Trader panel.
 Every Buy/Sell button sends a **market order** with an **OCO stop loss and profit target**. The size is calculated
 so that a loss can never exceed a **fixed dollar limit**. Every button can also be triggered with a hotkey.
 
@@ -12,18 +12,25 @@ Source: [`src/Indicators/RiskEntryPanel.cs`](src/Indicators/RiskEntryPanel.cs)
 2. In NinjaTrader: **New → NinjaScript Editor**, then press **F5** to compile.
 3. Open a chart, go to **Indicators…**, add **RiskEntryPanel** and set its properties.
 
-The panel appears on the left side of the chart. It only shows, and only responds to hotkeys, while its chart tab is selected.
+The buttons appear at the bottom of **Chart Trader**, with Buy buttons on the left and Sell buttons on the right.
+Chart Trader must be set to **Visible** or **Hidden** (right-click the chart → Chart Trader). If it is **Disabled**, there is
+nowhere to put the buttons, but the hotkeys still work. If you turn Chart Trader on after adding the indicator, switch tabs
+or reload the chart (F5) to show the buttons. The buttons only show, and the hotkeys only work, while the indicator's
+chart tab is selected.
+
+Hover over a button to see what it does, its stop offset, its target multiple and its hotkey.
 
 ## Buttons
 
-| Button | Long stop | Short stop | Default buy / sell hotkey |
-|---|---|---|---|
-| Cur Low / Cur High | current bar low − offset | current bar high + offset | `Ctrl+1` / `Ctrl+Shift+1` |
-| Prev Low / Prev High | previous bar low − offset | previous bar high + offset | `Ctrl+2` / `Ctrl+Shift+2` |
-| Prev Open | previous bar open − offset | previous bar open + offset | `Ctrl+3` / `Ctrl+Shift+3` |
-| Fixed 1–5 | entry − N ticks | entry + N ticks | `Ctrl+4…8` / `Ctrl+Shift+4…8` |
-| Close *instrument* | cancels orders and closes positions for the chart instrument | | `Ctrl+0` |
-| Flatten All | cancels all orders and closes all positions on every instrument | | `Ctrl+Alt+F` |
+| Buy button (left) | Sell button (right) | Long stop | Short stop | Default buy / sell hotkey |
+|---|---|---|---|---|
+| Buy CL | Sell CH | current candle low − offset | current candle high + offset | `Ctrl+1` / `Ctrl+Shift+1` |
+| Buy PL | Sell PH | previous candle low − offset | previous candle high + offset | `Ctrl+2` / `Ctrl+Shift+2` |
+| Buy PO | Sell PO | previous candle open − offset | previous candle open + offset | `Ctrl+3` / `Ctrl+Shift+3` |
+| Buy -N | Sell +N | entry − N ticks | entry + N ticks | `Ctrl+4…8` / `Ctrl+Shift+4…8` |
+| Close *instrument* | Flatten All | Close cancels orders and closes positions for the chart instrument | Flatten All cancels all orders and closes all positions on every instrument | `Ctrl+0` / `Ctrl+Alt+F` |
+
+N is the stop size in ticks of each of the five fixed-stop buttons (for example `Buy -10`, `Sell +10`).
 
 The profit target is set at **multiple × stop size** (in ticks) from the entry. Each button has its own offset or stop ticks,
 target multiple and hotkeys. You can turn off any of the five fixed-stop buttons. Hotkeys use the format `Ctrl+Shift+B`,
@@ -45,7 +52,7 @@ Example for ES (tick $12.50) with a $500 limit:
 
 ## What happens when you click
 
-1. The panel calculates the stop, the size and the target. It rejects the order, and shows the reason in the panel and the
+1. The panel calculates the stop, the size and the target. It rejects the order, and shows the reason in the status line and the
    Output window, if:
    - there is no real-time data;
    - the stop would be on the wrong side of the price (for example, a buy where the previous bar's open is above the current price);
@@ -68,14 +75,15 @@ Because the size is calculated before the fill, slippage on the market order can
   - max contracts;
   - fallback account;
   - confirmation dialogs for entries, Close and Flatten All (Flatten All asks for confirmation by default);
-  - whether Close and Flatten All act on the selected account only (the default) or on all accounts;
-  - panel width.
+  - whether Close and Flatten All act on the selected account only (the default) or on all accounts.
 - **Current bar / Previous bar / Previous open:** offset ticks, target multiple, buy hotkey, sell hotkey.
 - **Fixed stops 1–5:** enabled, stop ticks, target multiple, buy hotkey, sell hotkey.
 - **Close / flatten:** hotkeys.
 
 ## Test checklist (use the Sim101 account first)
 
+- [ ] The buttons appear in Chart Trader, Buy on the left and Sell on the right, and their tooltips show the hotkeys.
+- [ ] With the indicator on charts in two tabs of one window, switching tabs shows the buttons for the selected tab's instrument.
 - [ ] Every Buy and Sell button places a market entry, then a stop and a target at the expected prices and size.
 - [ ] Each hotkey triggers the same action as its button. Hotkeys do nothing while you type in a Chart Trader text box,
       or when another chart tab is selected.
